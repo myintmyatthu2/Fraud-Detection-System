@@ -1,0 +1,101 @@
+# !pip install numpy pandas matplotlib seaborn scikit-learn imbalanced-learn joblib
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import joblib
+
+# Sklearn & Imbalanced-learn
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, roc_curve
+from imblearn.over_sampling import SMOTE
+
+# Visualization settings
+%matplotlib inline
+sns.set(style="whitegrid")
+# Simulate Dataset (In real case: pd.read_csv('creditcard.csv'))
+def load_fraud_data(n_samples=2000):
+    np.random.seed(42)
+    time = np.random.randint(0, 172792, n_samples)
+    v_features = np.random.normal(0, 1, (n_samples, 28)) # V1-V28
+    amount = np.random.uniform(0, 5000, n_samples)
+    
+    df = pd.DataFrame(np.column_stack([time, v_features, amount]), 
+                      columns=['Time'] + [f'V{i}' for i in range(1, 29)] + ['Amount'])
+    
+    # 0 = Legit, 1 = Fraud (Target class) - highly imbalanced
+    df['Class'] = np.random.choice([0, 1], size=n_samples, p=[0.96, 0.04])
+    return df
+
+df = load_fraud_data()
+print(f"Dataset Shape: {df.shape}")
+print(df.head())
+
+X = df.drop('Class', axis=1)
+y = df['Class']
+
+# Train-Test Split with Stratify to maintain class ratio
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y
+)
+
+print(f"Training set size: {X_train.shape}")
+print(f"Fraud cases in Training: {sum(y_train == 1)}")
+
+print("--- Balancing Data ---")
+smote = SMOTE(random_state=42)
+X_train_res, y_train_res = smote.fit_resample(X_train, y_train)
+
+print(f"Original training shape: {y_train.shape}")
+print(f"Resampled training shape: {y_train_res.shape}")
+print(f"New Class distribution:\n{y_train_res.value_counts()}")
+
+# Define Pipeline (Scaling + Model)
+pipeline = Pipeline([
+    ('scaler', StandardScaler()),                 # Day 5
+    ('classifier', RandomForestClassifier(random_state=42)) # Day 19-20
+])
+
+# Param Grid for Tuning (Day 26)
+param_grid = {
+    'classifier__n_estimators': [50, 100],
+    'classifier__max_depth': [None, 10],
+    'classifier__min_samples_split': [2, 5]
+}
+
+# GridSearchCV
+grid_search = GridSearchCV(pipeline, param_grid, cv=3, scoring='f1', n_jobs=-1)
+grid_search.fit(X_train_res, y_train_res)
+
+print(f"Best Score: {grid_search.best_score_:.4f}")
+print(f"Best Params: {grid_search.best_params_}")
+
+# Predictions
+best_model = grid_search.best_estimator_
+y_pred = best_model.predict(X_test)
+y_prob = best_model.predict_proba(X_test)[:, 1]
+
+# Metrics
+print("\n--- Classification Report ---")
+print(classification_report(y_test, y_pred))
+
+# Plot ROC-AUC
+fpr, tpr, _ = roc_curve(y_test, y_prob)
+auc = roc_auc_score(y_test, y_prob)
+
+plt.figure(figsize=(8, 6))
+plt.plot(fpr, tpr, label=f"AUC = {auc:.2f}", color='darkorange', lw=2)
+plt.plot([0, 1], [0, 1], color='navy', linestyle='--')
+plt.title("ROC Curve")
+plt.xlabel("False Positive Rate")
+plt.ylabel("True Positive Rate")
+plt.legend()
+plt.show()
+
+# Final Step: Save the model
+joblib.dump(best_model, 'fraud_model_final.pkl')
+print("✅ Project Completed. Model saved as 'fraud_model_final.pkl'")
